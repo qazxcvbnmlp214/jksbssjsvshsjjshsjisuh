@@ -1,0 +1,637 @@
+--SF集线器·不闪退修复版（基于原始结构，仅修两个卡死源）
+--改动点：esp的boxhandleadornment只创建一次+QTE/GUI清扫不进深清扫
+
+-- ========== 远程库加载 ==========
+本地回购='https://raw.githubusercontent.com/DevSloPo/obsidian_UI/main/'
+本地Library=assert(loadstring(game:HttpGet(repo..'库。Lua'))，'Library.Lua loadstring'失败)()
+
+本地切换=库.切换
+本地选项=库.选项
+
+本地玩家=游戏：GetService(“玩家”)
+local LocalPlayer=players.LocalPlayer
+本地RunService=game:GetService("RunService")
+本地ReplicatedS=游戏：GetService("ReplicatedStorage")
+本地UserInputS=game:GetService("UserInputService")
+本地CoreGui=游戏：GetService("CoreGui")
+本地工作区=工作区
+本地VirtualInput=game:GetService("VirtualInputManager")
+本地PlayerGui=LocalPlayer:WaitForChild("PlayerGui"，5)或LocalPlayer:FindFirstChildOfClass("PlayerGui")
+
+局部函数N(标题、文本、t)
+pcall(函数()库：通知({Title=title，Description=text，Time=t或3})结束)
+结束
+
+-- ========== 常量 ==========
+局部C={
+端点=Vector3.new(-48.58，1148.54，197.73)，
+Startpoint=Vector3.new(-47.47，1024.51，-566.99)，
+God_OPEN_Y=1186.41，
+God_CLOSE_Y=1024.51，
+safe_BASE=Vector3.new(162.43，54.29，20.10)，
+safe_UP_ADD=80，
+WS=20，JP=50，JH=7.2，
+n_MN=30，N_MX=55，N_DN=0.12，N_DX=0.35，
+F_MN=40，F_MX=70，F_DN=0.015，F_DX=0.035，
+red=Color3.fromRGB(255，40，40)，
+YLW=Color3.fromRGB(255，220，0)，
+GRN=颜色3.来自RGB(60，255，100)，
+}
+
+本地功能安全(fn)返回(pcall(fn))结束
+局部函数getC()返回LocalPlayer和LocalPlayer。字符结束
+局部函数getHRP()局部c=getC()；返回c和(c:FindFirstChild("HumanoidRootPart")或c.PrimaryPart)结束
+局部函数Geth()局部c=getC()；返回c和c:FindFirstChild("Humanoid")end
+
+本地功能瞬移To(v)
+本地h=getHRP()；如果不是h，则返回false end
+h.CFrame=CFrame.new(v)；return true
+结束
+本地功能TeleportYOnly(y)
+本地h=getHRP()；如果不是h，则返回false end
+局部p=h.Position；h.CFrame=CFrame.new(Vector3.new(p.x，y，P.Z))；返回true
+结束
+本地功能teleportToSafe()
+    local h = getHRP(); if not h then return false end
+    h.CFrame = CFrame.new(Vector3.new(C.SAFE_BASE.X, C.SAFE_BASE.Y + C.SAFE_UP_ADD, C.SAFE_BASE.Z)); return true
+end
+
+-- ========== 防卡输入工具（节流，不狂点）==========
+local _lastInputAt = 0
+local function vClickScreen(x, y)
+    local now = os.clock()
+    if now - _lastInputAt < 0.01 then return end
+    _lastInputAt = now
+    pcall(function()
+        VirtualInput:SendMouseButtonEvent(x, y, 0, true, game, 1)
+        task.wait(0.01)
+        VirtualInput:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    end)
+end
+local function vClickGui(guiObj)
+    if not guiObj then return end
+    pcall(function()
+        local p = guiObj.AbsolutePosition; local s = guiObj.AbsoluteSize
+        if s.X > 2 and s.Y > 2 then vClickScreen(p.X + s.X/2, p.Y + s.Y/2) end
+    end)
+end
+local function vPressKey(keyCode)
+    local now = os.clock()
+    if now - _lastInputAt < 0.015 then return end
+    _lastInputAt = now
+    pcall(function()
+        VirtualInput:SendKeyEvent(true, keyCode, false, game)
+        task.wait(0.01)
+        VirtualInput:SendKeyEvent(false, keyCode, false, game)
+    end)
+end
+
+-- ========== 轻量GUI扫描（只扫2层，防卡死）==========
+local function scanTopGuiButtons(max)
+    max = max or 20
+    local r = {}
+    pcall(function()
+        for _, layer in ipairs(PlayerGui:GetChildren()) do
+            if layer:IsA("LayerCollector") and layer.Enabled then
+                for _, d in ipairs(layer:GetChildren()) do
+                    if #r >= max then break end
+                    if d:IsA("GuiButton") then
+                        local vis = false; pcall(function() vis = d.Visible end)
+                        if vis and d.AbsoluteSize.X > 6 and d.AbsoluteSize.Y > 6 then table.insert(r, d) end
+                    else
+                        -- 只多扫一层，绝不递归
+                        for _, d2 in ipairs(d:GetChildren()) do
+                            if #r >= max then break end
+                            if d2:IsA("GuiButton") then
+                                local vis2 = false; pcall(function() vis2 = d2.Visible end)
+                                if vis2 and d2.AbsoluteSize.X > 6 and d2.AbsoluteSize.Y > 6 then table.insert(r, d2) end
+                            end
+                        end
+                    end
+                end
+            end
+            if #r >= max then break end
+        end
+    end)
+    return r
+end
+
+-- ========== Remote 扫描 ==========
+local function findRemoteByKeywords(...)
+    local keys = {...}
+    local found = {}
+    local function match(name)
+        if not name then return false end
+        local n = tostring(name):lower()
+        for _, k in ipairs(keys) do if n:find(k:lower()) then return true end end
+        return false
+    end
+    local function scan(parent, depth)
+        if depth > 5 then return end
+        for _, c in ipairs(parent:GetChildren()) do
+            if c:IsA("RemoteEvent") or c:IsA("RemoteFunction") or c:IsA("BindableEvent") or c:IsA("BindableFunction") then
+                if match(c.Name) then table.insert(found, c) end
+            else
+                scan(c, depth + 1)
+            end
+        end
+    end
+    scan(ReplicatedS, 0)
+    return found
+end
+
+-- ========== 立刻 CreateWindow ==========
+local okW, Window = xpcall(function()
+    return Library:CreateWindow({
+        AutoShow = true,
+        Title = "SF Hub",
+        Icon = "rbxassetid://135192363328353",
+        NotifySide = "Right",
+        ShowCustomCursor = true,
+        Footer = "作者QQ交流群：994748392"
+    })
+end, debug.traceback)
+
+if not okW or not Window then
+    local msg = tostring(Window)
+    print("[SF Hub FATAL] CreateWindow 失败: " .. msg)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "SF Hub 失败", Text = "窗口创建失败:\n" .. msg, Duration = 15
+        })
+    end)
+    error(msg, 0)
+    return
+end
+
+N("SF Hub", "窗口创建成功，功能正在加载…", 2)
+print("[SF Hub] 窗口创建成功")
+
+local Tabs = {
+    A = Window:AddTab("公告", "info"),
+    G = Window:AddTab("游戏", "gamepad"),
+    S = Window:AddTab("设置", "settings"),
+}
+
+-- ========== 公告 ==========
+safe(function()
+    local L = Tabs.A:AddLeftGroupbox("脚本公告")
+    local R = Tabs.A:AddRightGroupbox("使用须知")
+    L:AddLabel('作者快手号：5604621687', true)
+    L:AddLabel('作者快手名：梦（roblox）', true)
+    L:AddLabel('作者QQ交流群:994748392', true)
+    for _, t in ipairs({
+        '1.本脚本均为测试防封系统做的不是很好,封号了后果自负',
+        '2.脚本禁止对外宣传,如有宣传作者发现后会立马删库',
+        '3.脚本并不是很好,而且我是新手如有改进我会尽量',
+        '4.如有更新情况联系作者，作者会修复',
+        '5.脚本是免费的，禁止倒卖',
+        '6.祝你玩的开心',
+    }) do R:AddLabel(t, true) end
+end)
+
+-- ========== 功能延迟 0.8s 注册 ==========
+task.delay(0.8, function()
+
+    --------------------------------------------------------
+    -- 左侧 1：木头人（原封不动）
+    --------------------------------------------------------
+    local Wood
+    safe(function() Wood = Tabs.G:AddLeftGroupbox("木头人") end)
+    if Wood then safe(function()
+        Wood:AddButton({
+            Text = '传送终点', Func = function()
+                if teleportTo(C.ENDPOINT) then N("木头人", string.format('已传送到终点 Y=%.2f', C.ENDPOINT.Y))
+                else N("木头人", '传送失败，请进入游戏后重试') end
+            end
+        })
+        Wood:AddButton({
+            Text = '传送起点', Func = function()
+                if teleportTo(C.STARTPOINT) then N("木头人", string.format('已传送到起点 Y=%.2f', C.STARTPOINT.Y))
+                else N("木头人", '传送失败，请进入游戏后重试') end
+            end
+        })
+        Wood:AddLabel(''); Wood:AddLabel('上帝模式')
+        Wood:AddToggle('GodMode', {
+            Text = '上帝模式', Default = false,
+            Callback = function(v)
+                if not getHRP() then N("木头人", '请先进入游戏再使用'); return end
+                if v then if teleportYOnly(C.GOD_OPEN_Y)  then N("木头人", '上帝模式已开启，高度' .. C.GOD_OPEN_Y) end
+                else   if teleportYOnly(C.GOD_CLOSE_Y) then N("木头人", '上帝模式已关闭，高度' .. C.GOD_CLOSE_Y) end end
+            end
+        })
+        Wood:AddLabel(''); Wood:AddLabel('修复断腿')
+        local LEG_KEEP = false
+        local function baseLegFix(h)
+            if not h then return end
+            h.PlatformStand = false; h.AutoRotate = true
+            h.WalkSpeed = C.WS; h.JumpPower = C.JP; h.JumpHeight = C.JH; h.UseJumpPower = true
+            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true) end)
+            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Seated, false) end)
+            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false) end)
+            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+            pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
+        end
+        local function fullLegFix()
+            local c = getC(); local h = getH(); if not c then return end
+            baseLegFix(h)
+            local rp = c:FindFirstChild("HumanoidRootPart")
+            if rp then
+                for _, o in ipairs(rp:GetChildren()) do
+                    if o:IsA("BallSocketConstraint") or o:IsA("WeldConstraint") then pcall(function() o:Destroy() end) end
+                end
+            end
+            for _, p in ipairs(c:GetChildren()) do
+                if p:IsA("BasePart") then
+                    local bc = p:FindFirstChild("BoneCustom")
+                    if bc then pcall(function() bc:Destroy() end) end
+                end
+            end
+            for _, tag in ipairs({"Ragdoll","Stun","RotateDisabled","RagdollWakeupImmunity","Kneeling","DalgonaComplete","Crouching"}) do
+                local t = c:FindFirstChild(tag)
+                if t then pcall(function() t:Destroy() end) end
+            end
+            local eff = Workspace:FindFirstChild("Effects")
+            if eff then
+                local lr = eff:FindFirstChild("LocalRagdolls")
+                if lr then local x = lr:FindFirstChild(LocalPlayer.Name); if x then pcall(function() x:Destroy() end) end end
+            end
+        end
+        Wood:AddButton({
+            Text = '修复断腿', Func = function()
+                if not getC() then N("木头人", '请先进入游戏'); return end
+                fullLegFix(); LEG_KEEP = true
+                N("木头人", '断腿已修复')
+            end
+        })
+        task.spawn(function()
+            local t0 = os.clock()
+            while (os.clock()-t0) < 600 do
+                if LEG_KEEP then local h = getH(); if h then pcall(function() baseLegFix(h) end) end end
+                task.wait(1.2)
+            end
+        end)
+        LocalPlayer.CharacterAdded:Connect(function() LEG_KEEP = false end)
+    end) end
+
+    --------------------------------------------------------
+    -- 左侧 2：拔河（仅修GUI扫描为轻量版，其他原结构保留）
+    --------------------------------------------------------
+    local TOW
+    safe(function() TOW = Tabs.G:AddLeftGroupbox("拔河") end)
+    if TOW then safe(function()
+        TOW:AddSlider("TugOfWarInterval", { Min=0, Max=3, Default=0.10, Rounding=2, Suffix=" 秒", Text="拉绳间隔" })
+        TOW:AddDropdown("qteSelectionTOW", { Values = { "正常", "狂暴" }, Default = "正常", Text = "QTE模式" })
+
+        -- Remote自动发现
+        local PullRemote, PullRemoteBind = nil, nil
+        local function detectPullRemote()
+            if PullRemote or PullRemoteBind then return PullRemote or PullRemoteBind end
+            local found = findRemoteByKeywords("pull","tug","rope","拉绳","拔河","pullrope","tugofwar")
+            for _, r in ipairs(found) do
+                if r:IsA("RemoteEvent") then PullRemote = r; break
+                elseif r:IsA("BindableEvent") then PullRemoteBind = r; break end
+            end
+            if not PullRemote and not PullRemoteBind then
+                local rm = ReplicatedS:FindFirstChild("Remotes")
+                if rm then
+                    for _, n in ipairs({"PullRope","TugOfWarPull","TemporaryReachedBindable","Pull","RopePull","TugPull"}) do
+                        local r = rm:FindFirstChild(n)
+                        if r and (r:IsA("RemoteEvent") or r:IsA("BindableEvent")) then
+                            if r:IsA("RemoteEvent") then PullRemote = r else PullRemoteBind = r end
+                            break
+                        end
+                    end
+                end
+            end
+            return PullRemote or PullRemoteBind
+        end
+
+        local function firePull()
+            local r = detectPullRemote()
+            if r then
+                if r:IsA("RemoteEvent") then pcall(function() r:FireServer() end)
+                elseif r:IsA("BindableEvent") then pcall(function() r:Fire() end) end
+            end
+            -- GUI兜底（轻量扫，不递归）
+            for _, b in ipairs(scanTopGuiButtons(5)) do
+                pcall(function() b:Activate() end); vClickGui(b)
+            end
+        end
+
+        local pullT
+        TOW:AddToggle("AutoPullRope", {
+            Text = "自动拉绳", Default = false,
+            Callback = function(st)
+                if pullT then pcall(function() task.cancel(pullT) end); pullT = nil end
+                if not st then return end
+                local r = detectPullRemote()
+                if not r then N("拔河", "启动GUI兜底模式（请确保画面有拉绳按钮）", 4)
+                else N("拔河", "已锁定Remote: " .. r.Name, 3) end
+                pullT = task.spawn(function()
+                    local cnt = 0; local burst = math.random(8,15); local t0 = os.clock()
+                    while (os.clock()-t0) < 600 do
+                        local on; if Toggles.AutoPullRope then pcall(function() on = Toggles.AutoPullRope.Value end) end
+                        if not on then return end
+                        local base = Options.TugOfWarInterval and Options.TugOfWarInterval.Value or 0.10
+                        if type(base) ~= "number" then base = 0.10 end
+                        local mode = Options.qteSelectionTOW and Options.qteSelectionTOW.Value or "正常"
+                        if mode == "狂暴" then base = math.min(base, 0.06) end
+                        local d = math.max(0.03, base * (1 + math.random()*0.3 - 0.15))
+                        firePull()
+                        cnt = cnt + 1
+                        if cnt >= burst then cnt = 0; burst = math.random(8,15); task.wait(0.12)
+                        else task.wait(d) end
+                    end
+                end)
+            end
+        })
+
+        -- 自动QTE（防卡：按钮缓存+不递归+键盘轮询）
+        local qteT
+        local qteBtnCache = {}
+        TOW:AddToggle("LegitAutoQTE", {
+            Text = "自动QTE", Default = false,
+            Callback = function(st)
+                if qteT then pcall(function() task.cancel(qteT) end); qteT = nil end
+                if not st then qteBtnCache = {}; return end
+                N("自动QTE", "已开启", 2)
+                qteT = task.spawn(function()
+                    local last = 0; local t0 = os.clock(); local lastScan = 0; local lastPP = 0
+                    local keyIdx = 0
+                    local qteKeys = {Enum.KeyCode.E, Enum.KeyCode.Space, Enum.KeyCode.F, Enum.KeyCode.Q, Enum.KeyCode.R}
+                    while (os.clock()-t0) < 600 do
+                        local on; if Toggles.LegitAutoQTE then pcall(function() on = Toggles.LegitAutoQTE.Value end) end
+                        if not on then return end
+                        local mode = Options.qteSelectionTOW and Options.qteSelectionTOW.Value or "正常"
+                        local interval = (mode == "狂暴") and (0.07 + math.random()*0.04) or (0.14 + math.random()*0.10)
+                        local now = os.clock()
+                        if now - last > interval then
+                            last = now
+
+                            -- 1. 先用缓存
+                            local hit = false
+                            if #qteBtnCache > 0 then
+                                local nc = {}
+                                for _, b in ipairs(qteBtnCache) do
+                                    if b and b.Parent then
+                                        local vis = false; pcall(function() vis = b.Visible end)
+                                        if vis then
+                                            pcall(function() b:Activate() end); vClickGui(b); hit = true
+                                            table.insert(nc, b)
+                                        end
+                                    end
+                                end
+                                qteBtnCache = nc
+                            end
+
+                            -- 2. 每0.3秒轻量扫，最多20个按钮
+                            if (not hit) and now - lastScan > 0.3 then
+                                lastScan = now
+                                local btns = scanTopGuiButtons(20)
+                                for _, b in ipairs(btns) do
+                                    local n = (b.Name or ""):lower()
+                                    if n:find("tap") or n:find("click") or n:find("qte")
+                                       or n:find("tug") or n:find("button") or n:find("pull")
+                                       or n:find("press") or n:find("hit") or n:find("space")
+                                       or n:find("prompt") or n:find("hold") or n:find("jump") then
+                                        pcall(function() b:Activate() end); vClickGui(b); hit = true
+                                        if #qteBtnCache < 6 then table.insert(qteBtnCache, b) end
+                                    end
+                                end
+                                -- 还没hit，大按钮都点
+                                if not hit then
+                                    for _, b in ipairs(btns) do
+                                        if b.AbsoluteSize.X > 60 and b.AbsoluteSize.Y > 30 then
+                                            pcall(function() b:Activate() end); vClickGui(b); hit = true; break
+                                        end
+                                    end
+                                end
+                            end
+
+                            -- 3. ProximityPrompt：每1.5秒，且以玩家位置为中心40格
+                            if now - lastPP > 1.5 then
+                                lastPP = now
+                                pcall(function()
+                                    local hrp = getHRP()
+                                    if hrp then
+                                        local myp = hrp.Position
+                                        for _, p in ipairs(Workspace:GetDescendants()) do
+                                            if p:IsA("ProximityPrompt") and p.Enabled then
+                                                local par = p.Parent
+                                                if par and par:IsA("BasePart") then
+                                                    local d = (par.Position - myp).Magnitude
+                                                    if d < 40 then pcall(function() fireproximityprompt(p) end); hit = true end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end)
+                            end
+
+                            -- 4. 键盘：狂暴按2个，正常按1个，轮询
+                            keyIdx = (keyIdx % #qteKeys) + 1
+                            vPressKey(qteKeys[keyIdx])
+                            if mode == "狂暴" then
+                                task.wait(0.008)
+                                vPressKey(qteKeys[(keyIdx % #qteKeys) + 1])
+                            end
+
+                            -- 5. 每1.5秒还没hit就发QTE Remote兜底
+                            if (not hit) and now - lastPP > 1.5 then
+                                local found = findRemoteByKeywords("qte","click","tap","press")
+                                for i, r in ipairs(found) do
+                                    if i > 3 then break end
+                                    if r:IsA("RemoteEvent") then pcall(function() r:FireServer() end)
+                                    elseif r:IsA("BindableEvent") then pcall(function() r:Fire() end) end
+                                end
+                            end
+                        end
+                        task.wait(mode == "狂暴" and 0.06 or 0.1)
+                    end
+                end)
+            end
+        })
+
+        TOW:AddButton({
+            Text = "重新扫描拉绳/QTE Remote",
+            Func = function()
+                PullRemote = nil; PullRemoteBind = nil
+                local r = detectPullRemote()
+                local found = findRemoteByKeywords("qte","click","tap","press","pull","tug","rope")
+本地线路={}
+                if r then table.insert(lines, "拉绳: " .. r.Name) end
+                table.insert(lines, "相关Remote(前6):")
+                for i, x in ipairs(found) do if i > 6 then break end table.insert(lines, x.Name) end
+                N("扫描结果", table.concat(lines, "\n"), 7)
+                print("[SF Hub][TOW] 拉绳: " .. (r and r.Name or "nil") .. "  QTE数量: " .. #found)
+            end
+        })
+    end) end
+
+    --------------------------------------------------------
+    -- 右侧 1：扣糖饼（原封不动，只把远程发的参数保留）
+    --------------------------------------------------------
+    local DALG
+    safe(function() DALG = Tabs.G:AddRightGroupbox("扣糖饼") end)
+    if DALG then safe(function()
+        local function dr() local r = ReplicatedS:FindFirstChild("Remotes"); return r and r:FindFirstChild("DALGONATEMPREMPTE") end
+        local function fixCam()
+            local cam = Workspace.CurrentCamera; if cam then
+                pcall(function() cam.CameraType = Enum.CameraType.Custom; local h = getH(); if h then cam.CameraSubject = h end end)
+            end
+        end
+        local function stand()
+            local c = getC(); local h = getH()
+            if h then pcall(function() h.Sit = false end)
+                local function bf(hh)
+                    hh.PlatformStand=false;hh.AutoRotate=true;hh.WalkSpeed=C.WS;hh.JumpPower=C.JP;hh.JumpHeight=C.JH;hh.UseJumpPower=true
+                    pcall(function() hh:SetStateEnabled(Enum.HumanoidStateType.Jumping,true) end)
+                    pcall(function() hh:SetStateEnabled(Enum.HumanoidStateType.Seated,false) end)
+                    pcall(function() hh:SetStateEnabled(Enum.HumanoidStateType.Ragdoll,false) end)
+                    pcall(function() hh:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                    pcall(function() hh:ChangeState(Enum.HumanoidStateType.Running) end)
+                end
+                pcall(function() bf(h) end)
+            end
+            if c then
+                for _, tag in ipairs({"Kneeling","DalgonaPose","Dalgona","Sitting","Crouching","DalgonaComplete"}) do
+                    local t = c:FindFirstChild(tag); if t then pcall(function() t:Destroy() end) end
+                end
+            end
+            fixCam()
+            for _, nm in ipairs({"ImpactFrames","DalgonaGui","DalgonaUI","DalgonaFrame","ProgressContainer","ProgressBarFrame","CookieUI"}) do
+                local f = PlayerGui:FindFirstChild(nm)
+                if f then
+                    pcall(function() f.Visible = false end)
+                    for _, d in ipairs(f:GetDescendants()) do
+                        if d:IsA("GuiObject") then pcall(function() d.Visible = false end) end
+                    end
+                end
+            end
+            UserInputS.MouseIconEnabled = true
+        end
+        local function paintGreen()
+            local GREEN = Color3.fromRGB(0,255,80)
+            local eff = Workspace:FindFirstChild("Effects")
+            if eff then
+                for _, o in ipairs(eff:GetChildren()) do
+                    if o:IsA("Model") then
+                        local n = o.Name
+                        if n == "Pick" or n == "RedDot" then
+                            for _, d in ipairs(o:GetDescendants()) do
+                                if d:IsA("BasePart") then pcall(function() d.LocalTransparencyModifier = 1 end) end
+                            end
+                        elseif n:match("Outline$") or (not n:find("Dalgona")) then
+                            for _, d in ipairs(o:GetDescendants()) do
+                                if d:IsA("BasePart") then
+                                    pcall(function() d.Color = GREEN; d.Material = Enum.Material.Neon; d.LocalTransparencyModifier = 0 end)
+                                elseif d:IsA("MeshPart") then
+                                    pcall(function() d.Color = GREEN; d.Material = Enum.Material.Neon end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            local imp = PlayerGui:FindFirstChild("ImpactFrames")
+            if imp then
+                local pb = imp:FindFirstChild("ProgressBar")
+                if pb then
+                    pcall(function() pb.Visible = true end)
+                    for _, b in ipairs(pb:GetDescendants()) do
+                        if b:IsA("Frame") then pcall(function() b.BackgroundColor3 = GREEN; b.Size = UDim2.new(1,0,1,0) end)
+                        elseif b:IsA("TextLabel") then pcall(function() b.Text = "100%" end) end
+                    end
+                end
+            end
+            UserInputS.MouseIconEnabled = true; fixCam()
+        end
+        local function clicks(mn,mx,dn,dx)
+            local rep = ReplicatedS:FindFirstChild("Replication")
+            local ev = rep and rep:FindFirstChild("Event")
+            local total = math.random(mn,mx)
+            for i = 1, total do
+                if not dr() then return false end
+                if ev then pcall(function() ev:FireServer("Clicked") end) end
+                pcall(function() dr():FireServer() end)
+                task.wait(dn + math.random() * (dx - dn))
+            end
+            return true
+        end
+        local function bypassNormal()
+            local r = dr(); if not r then N("绕过糖饼", "糖饼远程不存在"); return false end
+            local lighter = Toggles.LighterAddon and Toggles.LighterAddon.Value == true
+            paintGreen()
+            local a,b,d1,d2 =
+                lighter and 18 or C.N_MN, lighter and 32 or C.N_MX,
+                lighter and 0.08 or C.N_DN, lighter and 0.22 or C.N_DX
+            if not clicks(a,b,d1,d2) then return false end
+            pcall(function() r:FireServer({ Completed = true }) end)
+            task.wait(0.3); stand(); return true
+        end
+        local function fast()
+            local r = dr(); if not r then N("自动扣糖饼", "糖饼远程不存在"); return false end
+            paintGreen()
+            if not clicks(C.F_MN,C.F_MX,C.F_DN,C.F_DX) then return false end
+            pcall(function() r:FireServer({ Completed = true }) end)
+            task.wait(0.3); stand(); N("自动扣糖饼", "扣糖饼完成"); return true
+        end
+
+        DALG:AddButton({ Text = "自动扣糖饼", Func = function() task.spawn(fast) end })
+        DALG:AddButton({ Text = "绕过糖饼游戏", Func = function() task.spawn(function() if bypassNormal() then N("绕过糖饼", "已触发") end end) end })
+        DALG:AddToggle("LighterAddon", {
+文本="给予打火机"，默认值=false，
+            Callback = function(s)
+                                        if vis then
+当地的OK，err=pcall(函数()LocalPlayer:SetAttribute("HasLighter"，true)结束)
+如果合格，则N("扣糖饼"，"打火机已启用。"，4)
+else N("扣糖饼"，"打火机启用失败："..toString(err)，4)end
+            else
+pcall(函数()LocalPlayer:SetAttribute("HasLighter"，false)结束)
+N("扣糖饼"，"打火机已关闭。" )
+end
+end
+        })
+    end) end
+
+    --------------------------------------------------------
+--右侧2：熄灯+透视（核心修复：装饰只创建一次，绝不每tick重建)
+    --------------------------------------------------------
+    local Xideng
+safe(function()Xideng=Tabs.G:AddRightGroupbox("熄灯")结束)
+    if Xideng then safe(function()
+
+Xideng:AddButton({
+text=string.format("传送安全点(+%d格)"，C.SAFE_UP_ADD)，
+            Func = function()
+如果teleportToSafe()，则N("传送安全点"，string.format('已到达：(%.2f，%.2f，%.2f)[基础+%d格]'，C。safe_BASE.X，c.safe_BASE.y+c.safe_UP_ADD，c.safe_BASE.Z，c.safe_UP_ADD)，4)
+else N("传送安全点"，'传送失败，请先进入游戏')end
+end
+        })
+
+Xideng:AddSlider("LowHpThreshold"，{Min=1，Max=100，Default=80，舍入=0，后缀="%"，文本="血量阈值"})
+        local hpT
+Xideng:AddToggle("LowHpTeleport"，{
+文本="低血自动传送"，默认值=false，
+            Callback = function(st)
+如果hpT，则pcall(函数()task.cancel(hpT)结束)；hpT=nil结束
+                if not st then return end
+                hpT = task.spawn(function()
+                    local last = 0; local t0 = os.clock()
+当(os.clock()-t0)<600do时
+local on；如果Toggles.LowHpTeleport，则pcall(函数()on=Toggles.LowHpTeleport.价值结束)
+                        if not on then return end
+局部h=Geth()
+                        if h then
+局部mx；pcall(函数()mx=h.MaxHealth结束)
+如果mx和mx>0，则
+当地的THR=选项.LowHpThreshold和选项.值或80
+如果类型(thr)~="数字"，则thr=80结束
+局部HP；pcall(函数()hp=h.健康结束)
+如果hp~=零，则
+局部PCT=hp/mx*100
+如果pct<=thr，则
+                                        local now = os.clock()
